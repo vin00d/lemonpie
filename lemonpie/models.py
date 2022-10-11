@@ -59,7 +59,7 @@ def linear_layer(in_features, out_features, bn=False, dropout_p=0.0):
     return layer
 
 
-def create_linear_layers(in_features_start, num_layers, bn=False, dropout_p=0.0):
+def create_linear_layers(in_features_start, num_layers, num_labels, bn=False, dropout_p=0.0):
     """Create linear layers."""
     layers = []
 
@@ -73,6 +73,7 @@ def create_linear_layers(in_features_start, num_layers, bn=False, dropout_p=0.0)
 
         layers.extend(linear_layer(in_features, out_features, bn, dropout_p))
 
+    layers.append(nn.Linear(out_features, num_labels))
     return out_features, nn.Sequential(*layers)
 
 
@@ -156,10 +157,10 @@ class EHR_LSTM(pl.LightningModule):
             self.lstm_bn = BatchNorm1dFlat(
                 self.nh
             )  # fastai - `nn.BatchNorm1d`, but first flattens leading dimensions
-        out, self.lin = create_linear_layers(
-            lin_features_start, linear_layers, bn, linear_drp
+        self.repr_dim, self.linear = create_linear_layers(
+            lin_features_start, linear_layers, num_labels, bn, linear_drp
         )
-        self.lin_o = nn.Linear(out, num_labels)
+        # self.lin_o = nn.Linear(out, num_labels)
 
         init_lstm(self, initrange, zero_bn)
 
@@ -232,15 +233,15 @@ class EHR_LSTM(pl.LightningModule):
 
         res, _ = self.lstm(ptbatch_recs, (h, h))
         res = self.lstm_bn(res[:, -1]) if self.bn else res[:, -1]  # lstm output
-        res = self.lin(
+        out = self.linear(
             torch.cat((res, ptbatch_demogs), dim=1)
         )  # concat demographics + send thru linear lyrs
-        out = self.lin_o(res)
+        # out = self.lin_o(res)
 
         return out
 
     def training_step(self, batch, batch_idx):
-        xb, yb = batch
+        xb, yb, _, _ = batch
         xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
             self.device, non_blocking=True
         )
@@ -254,7 +255,7 @@ class EHR_LSTM(pl.LightningModule):
         return train_loss
 
     def validation_step(self, batch, batch_idx):
-        xb, yb = batch
+        xb, yb, _, _ = batch
         xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
             self.device, non_blocking=True
         )
@@ -268,7 +269,7 @@ class EHR_LSTM(pl.LightningModule):
         return valid_loss
 
     def test_step(self, batch, batch_idx):
-        xb, yb = batch
+        xb, yb, _, _ = batch
         xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
             self.device, non_blocking=True
         )
