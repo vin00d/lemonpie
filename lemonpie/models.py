@@ -160,7 +160,6 @@ class EHR_LSTM(pl.LightningModule):
         self.repr_dim, self.linear = create_linear_layers(
             lin_features_start, linear_layers, num_labels, bn, linear_drp
         )
-        # self.lin_o = nn.Linear(out, num_labels)
 
         init_lstm(self, initrange, zero_bn)
 
@@ -217,17 +216,19 @@ class EHR_LSTM(pl.LightningModule):
         return ptbatch_recs, ptbatch_demogs
 
 
-    def forward(self, x):
+    def forward(self, batch):
+        pts = batch["patients"]
+        pts = [pt.to_gpu(non_block=True) for pt in pts]
 
-        bs = len(x)
-        bptt = len(x[0].obs_offsts)
+        bs = len(pts)
+        bptt = len(pts[0].obs_offsts)
         h = torch.zeros(self.lstm_layers, bs, self.nh, device=self.device)
 
         ptbatch_recs = torch.empty(bs, bptt, self.rec_wd, device=self.device)
         ptbatch_demogs = torch.empty(
             bs, self.demograph_wd + 1 + self.amp_pad, device=self.device
         )
-        ptbatch_recs, ptbatch_demogs = self.get_embs(ptbatch_recs, ptbatch_demogs, x)
+        ptbatch_recs, ptbatch_demogs = self.get_embs(ptbatch_recs, ptbatch_demogs, pts)
 
         ptbatch_recs = self.input_dp(ptbatch_recs)  # apply input dropout
 
@@ -236,16 +237,12 @@ class EHR_LSTM(pl.LightningModule):
         out = self.linear(
             torch.cat((res, ptbatch_demogs), dim=1)
         )  # concat demographics + send thru linear lyrs
-        # out = self.lin_o(res)
 
         return out
 
     def training_step(self, batch, batch_idx):
-        xb, yb, _, _ = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         train_loss = self.train_loss_fn(y_hat, yb)
 
         self.log("train_loss", train_loss, on_step=True, on_epoch=True)
@@ -255,11 +252,8 @@ class EHR_LSTM(pl.LightningModule):
         return train_loss
 
     def validation_step(self, batch, batch_idx):
-        xb, yb, _, _ = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         valid_loss = self.valid_loss_fn(y_hat, yb)
 
         self.log("valid_loss", valid_loss, on_step=True, on_epoch=True)
@@ -269,11 +263,8 @@ class EHR_LSTM(pl.LightningModule):
         return valid_loss
 
     def test_step(self, batch, batch_idx):
-        xb, yb, _, _ = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         # test_loss = self.loss_fns["test"](y_hat, yb)
 
         # self.log("test_loss", test_loss, on_step=True, on_epoch=True)
@@ -385,10 +376,9 @@ class EHR_CNN(pl.LightningModule):
             nn.AdaptiveMaxPool2d((4, 4)),
             nn.Flatten()
         )
-        out, self.lin = create_linear_layers(
-            lin_features_start, linear_layers, bn, linear_drp
+        self.repr_dim, self.linear = create_linear_layers(
+            lin_features_start, linear_layers, num_labels, bn, linear_drp
         )
-        self.lin_o = nn.Linear(out, num_labels)
 
         init_cnn(self, initrange, zero_bn)
 
@@ -442,34 +432,34 @@ class EHR_CNN(pl.LightningModule):
 
         return ptbatch_recs, ptbatch_demogs
 
-    def forward(self, x):
+    def forward(self, batch):
 
-        bs = len(x)
-        height = len(x[0].obs_offsts)
+        pts = batch["patients"]
+        pts = [pt.to_gpu(non_block=True) for pt in pts]
+
+        bs = len(pts)
+        height = len(pts[0].obs_offsts)
         width = self.rec_wd
 
         ptbatch_recs = torch.empty(bs, height, width, device=self.device)
         ptbatch_demogs = torch.empty(
             bs, self.demograph_wd + 1 + self.amp_pad, device=self.device
         )
-        ptbatch_recs, ptbatch_demogs = self.get_embs(ptbatch_recs, ptbatch_demogs, x)
+        ptbatch_recs, ptbatch_demogs = self.get_embs(ptbatch_recs, ptbatch_demogs, pts)
 
         ptbatch_recs = self.input_dp(ptbatch_recs)  # apply input dropout
 
         res = self.cnn(ptbatch_recs.reshape(bs, 1, height, width))  # cnn output
-        res = self.lin(
+
+        out = self.linear(
             torch.cat((res, ptbatch_demogs), dim=1)
         )  # concat demographics + send thru linear lyrs
-        out = self.lin_o(res)
 
         return out
 
     def training_step(self, batch, batch_idx):
-        xb, yb = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         train_loss = self.train_loss_fn(y_hat, yb)
 
         self.log("train_loss", train_loss, on_step=True, on_epoch=True)
@@ -479,11 +469,8 @@ class EHR_CNN(pl.LightningModule):
         return train_loss
 
     def validation_step(self, batch, batch_idx):
-        xb, yb = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         valid_loss = self.valid_loss_fn(y_hat, yb)
 
         self.log("valid_loss", valid_loss, on_step=True, on_epoch=True)
@@ -493,11 +480,8 @@ class EHR_CNN(pl.LightningModule):
         return valid_loss
 
     def test_step(self, batch, batch_idx):
-        xb, yb = batch
-        xb, yb = [x.to_gpu(non_block=True) for x in xb], yb.to(
-            self.device, non_blocking=True
-        )
-        y_hat = self(xb)
+        yb = batch["ys"]
+        y_hat = self(batch)
         # test_loss = self.loss_fns["test"](y_hat, yb)
 
         # self.log("test_loss", test_loss, on_step=True, on_epoch=True)
