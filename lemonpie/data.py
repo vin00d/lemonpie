@@ -263,20 +263,50 @@ class MultimodalDataset(torch.utils.data.Dataset):
 # Cell
 def multimodal_collate(batch):
     """Custom collate fn for EHR plus 3 other modalities."""
+    batch_out = {}
     ehr, other = zip(*batch)
     pts, ys, ms = zip(*ehr)
-    ys = torch.stack(ys)
+    batch_out["patients"] = pts
+    batch_out["ys"] = torch.stack(ys)
 
-    if ms[0] in [1, 10, 20]:
-        other = torch.stack(other)
-    if ms[0] in [11, 21, 30]:
-        mod1, mod2 = zip(*other)
-        other = (torch.stack(mod1), torch.stack(mod2))
-    if ms[0] == 31:
-        mod1, mod2, mod3 = zip(*other)
-        other = (torch.stack(mod1), torch.stack(mod2), torch.stack(mod3))
+    if ms[0] == 0:
+        return batch_out
 
-    return pts, ys, ms, other
+
+    elif ms[0] == 1:
+        batch_out["mri"] = torch.stack(other)
+
+    elif ms[0] == 10:
+        batch_out["dna"] = torch.stack(other)
+
+    elif ms[0] == 11:
+        mri_input, dna_input = zip(*other)
+        batch_out["mri"] = torch.stack(mri_input)
+        batch_out["dna"] = torch.stack(dna_input)
+
+    elif ms[0] == 20:
+        batch_out["ecg"] = torch.stack(other)
+
+    elif ms[0] == 21:
+        mri_input, ecg_input = zip(*other)
+        batch_out["mri"] = torch.stack(mri_input)
+        batch_out["ecg"] = torch.stack(ecg_input)
+
+    elif ms[0] == 30:
+        dna_input, ecg_input = zip(*other)
+        batch_out["dna"] = torch.stack(dna_input)
+        batch_out["ecg"] = torch.stack(ecg_input)
+
+    elif ms[0] == 31:
+        mri_input, dna_input, ecg_input = zip(*other)
+        batch_out["mri"] = torch.stack(mri_input)
+        batch_out["dna"] = torch.stack(dna_input)
+        batch_out["ecg"] = torch.stack(ecg_input)
+
+    else:
+        raise Exception(f"Unrecognized modality type {ms[0]}.")
+
+    return batch_out
 
 
 # Cell
